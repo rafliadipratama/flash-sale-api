@@ -37,7 +37,72 @@ The API will be available at `http://localhost:8000`
 
 ### Production Deployment
 
-Use a proper web server like Apache or Nginx pointing to the `public/` directory.
+#### Option 1: Railway (Recommended - Free tier available)
+
+1. Push code to GitHub:
+   ```bash
+   git remote add origin https://github.com/YOUR_USERNAME/online-store-api.git
+   git branch -M main
+   git push -u origin main
+   ```
+
+2. Deploy to Railway:
+   - Go to https://railway.app
+   - Click "New Project" → "Deploy from GitHub"
+   - Select this repository
+   - Railway will automatically detect it as a PHP app
+   - Set environment variables if needed via Railway dashboard
+   - Your API will be live in minutes!
+
+3. Your API URL will be something like:
+   ```
+   https://online-store-api-production-xxxx.railway.app
+   ```
+
+#### Option 2: Traditional Web Server (Apache/Nginx)
+
+Point your web server's document root to the `public/` directory.
+
+**Apache .htaccess** (if needed):
+```apache
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteBase /
+    RewriteCond %{REQUEST_FILENAME} !-f
+    RewriteCond %{REQUEST_FILENAME} !-d
+</IfModule>
+```
+
+## Input Validation
+
+All API endpoints validate input thoroughly and return detailed error messages:
+
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "errors": {
+    "name": "Field 'name' is required",
+    "price": "Field 'price' must be greater than 0"
+  }
+}
+```
+
+### Validation Rules:
+
+**Products:**
+- `name`: Required, string, 1-255 characters
+- `price`: Required, numeric, must be > 0
+- `flash_sale_price`: Optional, numeric, must be > 0 if provided
+- `inventory`: Optional, numeric, must be >= 0
+
+**Orders:**
+- `customer_name`: Required, string, 1-255 characters
+- `items`: Required, array with at least 1 item
+
+**Order Items:**
+- `product_id`: Required, numeric, must be positive
+- `quantity`: Required, numeric, must be positive
 
 ## API Endpoints
 
@@ -244,19 +309,26 @@ Verification:
 ```
 .
 ├── public/
-│   └── index.php           # API entry point and routes
+│   └── index.php                # API entry point and routes
 ├── src/
-│   ├── Database.php        # Database connection singleton
-│   ├── Response.php        # JSON response helper
+│   ├── Database.php             # Database connection singleton
+│   ├── Response.php             # JSON response helper
+│   ├── Validator.php            # Input validation engine
 │   └── Models/
-│       ├── Product.php     # Product model
-│       └── Order.php       # Order model with race condition handling
+│       ├── Product.php          # Product model
+│       └── Order.php            # Order model with race condition handling
 ├── tests/
-│   └── RaceConditionTest.php # Functional test for race conditions
+│   ├── RaceConditionTest.php    # Functional test for race conditions
+│   └── ApiTest.sh               # Integration test script
 ├── database/
-│   └── init.sql            # Database schema
+│   └── init.sql                 # Database schema
 ├── config/
-│   └── database.php        # Database configuration
+│   └── database.php             # Database configuration
+├── vendor/
+│   └── autoload.php             # PSR-4 autoloader
+├── .env.example                 # Environment variables template
+├── Procfile                     # Railway deployment config
+├── runtime.txt                  # PHP version for Railway
 ├── composer.json
 └── README.md
 ```
