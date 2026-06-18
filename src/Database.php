@@ -38,6 +38,16 @@ class Database
     {
         $db = self::connect();
         $sql = file_get_contents(__DIR__ . '/../database/init.sql');
-        $db->exec($sql);
+
+        // Use transaction to ensure all tables are created atomically
+        // If any statement fails, entire initialization rolls back
+        $db->exec('BEGIN TRANSACTION');
+        try {
+            $db->exec($sql);
+            $db->exec('COMMIT');
+        } catch (\PDOException $e) {
+            $db->exec('ROLLBACK');
+            throw $e;
+        }
     }
 }
