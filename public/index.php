@@ -4,6 +4,7 @@ require __DIR__ . '/../vendor/autoload.php';
 
 use App\Database;
 use App\Response;
+use App\Validator;
 use App\Models\Product;
 use App\Models\Order;
 
@@ -52,14 +53,20 @@ elseif ($method === 'POST' && preg_match('#^/products$#', $path)) {
     try {
         $input = json_decode(file_get_contents('php://input'), true);
 
-        $name = $input['name'] ?? null;
-        $price = isset($input['price']) ? (float)$input['price'] : null;
+        $validator = new Validator();
+        if (!$validator->validate($input, [
+            'name' => ['required', 'string', 'min:1', 'max:255'],
+            'price' => ['required', 'numeric', 'positive'],
+            'flash_sale_price' => ['numeric', 'positive'],
+            'inventory' => ['numeric', 'non_negative'],
+        ])) {
+            Response::error('Validation failed', 400, $validator->getErrors());
+        }
+
+        $name = trim($input['name']);
+        $price = (float)$input['price'];
         $flashSalePrice = isset($input['flash_sale_price']) ? (float)$input['flash_sale_price'] : null;
         $inventory = isset($input['inventory']) ? (int)$input['inventory'] : 0;
-
-        if (!$name || $price === null) {
-            Response::error('Missing required fields: name, price', 400);
-        }
 
         $product = Product::create($name, $price, $flashSalePrice, $inventory);
         Response::success($product->toArray(), 201);
@@ -73,22 +80,30 @@ elseif ($method === 'POST' && preg_match('#^/orders$#', $path)) {
     try {
         $input = json_decode(file_get_contents('php://input'), true);
 
-        $customerName = $input['customer_name'] ?? null;
-        $items = $input['items'] ?? [];
-
-        if (!$customerName) {
-            Response::error('Missing required field: customer_name', 400);
+        $validator = new Validator();
+        if (!$validator->validate($input, [
+            'customer_name' => ['required', 'string', 'min:1', 'max:255'],
+            'items' => ['required', 'array', 'min_items:1'],
+        ])) {
+            Response::error('Validation failed', 400, $validator->getErrors());
         }
 
-        if (empty($items)) {
-            Response::error('Order must contain at least one item', 400);
-        }
+        $customerName = trim($input['customer_name']);
+        $items = $input['items'];
 
-        // Validate items
-        foreach ($items as $item) {
-            if (!isset($item['product_id']) || !isset($item['quantity'])) {
-                Response::error('Each item must have product_id and quantity', 400);
+        // Validate each item
+        $itemErrors = [];
+        foreach ($items as $idx => $item) {
+            if (!isset($item['product_id']) || !is_numeric($item['product_id'])) {
+                $itemErrors[] = "Item {$idx}: product_id is required and must be numeric";
             }
+            if (!isset($item['quantity']) || !is_numeric($item['quantity']) || (int)$item['quantity'] <= 0) {
+                $itemErrors[] = "Item {$idx}: quantity is required and must be positive";
+            }
+        }
+
+        if (!empty($itemErrors)) {
+            Response::error('Invalid order items', 400, ['items' => $itemErrors]);
         }
 
         $result = Order::createWithItems($customerName, $items);
