@@ -97,27 +97,29 @@ class Order
     }
 
     /**
-     * Create order with items. Uses transaction and row-level locking to handle race conditions.
-     * The key is using IMMEDIATE transaction mode to lock early and prevent inventory overallocation.
+     * Create order with items. Uses transaction to handle race conditions.
+     * SQLite's BEGIN IMMEDIATE ensures atomic operations and prevents concurrent modifications.
      */
     public static function createWithItems(string $customerName, array $items): array
     {
         $db = Database::connect();
 
         try {
-            // Start transaction with IMMEDIATE mode to acquire locks immediately
+            // START IMMEDIATE: Acquire exclusive lock immediately.
+            // This prevents other transactions from reading/writing until this transaction completes.
             $db->exec('BEGIN IMMEDIATE');
 
             $totalAmount = 0;
             $orderId = null;
 
-            // Lock and validate inventory for all products first
+            // Validate and lock inventory for all products
+            $productData = [];
             foreach ($items as $item) {
                 $productId = $item['product_id'];
                 $quantity = $item['quantity'];
 
-                // Lock the product row and check inventory
-                $stmt = $db->prepare('SELECT inventory FROM products WHERE id = ? FOR UPDATE');
+                // Check product existence and get current inventory
+                $stmt = $db->prepare('SELECT id, inventory, price, flash_sale_price FROM products WHERE id = ?');
                 $stmt->execute([$productId]);
                 $row = $stmt->fetch();
 
@@ -126,13 +128,18 @@ class Order
                 }
 
                 $currentInventory = (int)$row['inventory'];
-
                 if ($currentInventory < $quantity) {
                     throw new \Exception("Insufficient inventory for product {$productId}. Available: {$currentInventory}, Requested: {$quantity}", 409);
                 }
+
+                $productData[$productId] = [
+                    'inventory' => $currentInventory,
+                    'price' => $row['price'],
+                    'flash_sale_price' => $row['flash_sale_price'],
+                ];
             }
 
-            // All inventory checks passed, now create the order
+            // All inventory checks passed, create the order
             $stmt = $db->prepare('INSERT INTO orders (customer_name, total_amount, status) VALUES (?, ?, ?)');
             $stmt->execute([$customerName, 0, 'pending']);
             $orderId = (int)$db->lastInsertId();
@@ -141,15 +148,10 @@ class Order
             foreach ($items as $item) {
                 $productId = $item['product_id'];
                 $quantity = $item['quantity'];
+                $data = $productData[$productId];
 
-                // Get product for pricing
-                $product = Product::getById($productId);
-                if (!$product) {
-                    throw new \Exception("Product {$productId} not found", 404);
-                }
-
-                // Use flash sale price if available, otherwise regular price
-                $unitPrice = $product->getFlashSalePrice() ?? $product->getPrice();
+                // Use flash sale price if available
+                $unitPrice = $data['flash_sale_price'] ?? $data['price'];
                 $itemTotal = $unitPrice * $quantity;
                 $totalAmount += $itemTotal;
 
@@ -159,14 +161,14 @@ class Order
                 );
                 $stmt->execute([$orderId, $productId, $quantity, $unitPrice]);
 
-                // Update inventory (decrease)
+                // Update inventory (atomically decrease)
                 $stmt = $db->prepare(
                     'UPDATE products SET inventory = inventory - ? WHERE id = ?'
                 );
                 $stmt->execute([$quantity, $productId]);
 
                 // Log inventory change
-                $beforeInventory = $product->getInventory();
+                $beforeInventory = $data['inventory'];
                 $afterInventory = $beforeInventory - $quantity;
                 $stmt = $db->prepare(
                     'INSERT INTO inventory_logs (product_id, quantity_before, quantity_after, order_id) VALUES (?, ?, ?, ?)'
