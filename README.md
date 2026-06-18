@@ -172,7 +172,7 @@ This prevents the classic "overselling" problem where multiple concurrent reques
 
 ## Running Tests
 
-### Race Condition Test
+### Race Condition Test (Functional Test)
 
 Run the functional test to verify the system handles concurrent orders correctly:
 
@@ -185,6 +185,26 @@ This test:
 2. Simulates 15 concurrent orders, each trying to buy 5 units (75 total)
 3. Verifies that only 10 units are sold and inventory never goes negative
 4. Displays detailed results showing which orders succeeded and which failed
+
+### API Integration Test
+
+Run the API test script to verify all endpoints work correctly:
+
+```bash
+# Start the server first
+cd public && php -S localhost:8000
+
+# In another terminal
+bash tests/ApiTest.sh
+```
+
+This script tests:
+- Creating products with flash sale prices
+- Listing all products
+- Getting product details
+- Creating orders with multiple items
+- Retrieving order details
+- Error handling (insufficient inventory, missing fields, 404s)
 
 Expected output:
 ```
