@@ -97,28 +97,41 @@ class Order
     }
 
     /**
-     * Create order with items. Uses transaction to handle race conditions.
-     * SQLite's BEGIN IMMEDIATE ensures atomic operations and prevents concurrent modifications.
+     * Create order with items. Uses database transactions to prevent race conditions.
+     *
+     * Race condition scenario: During flash sale, multiple customers try to buy
+     * the same product simultaneously. Without proper locking, inventory could go negative.
+     *
+     * Solution: Use BEGIN IMMEDIATE transaction mode which:
+     * 1. Acquires exclusive lock immediately (not DEFERRED)
+     * 2. Prevents dirty reads/writes from concurrent transactions
+     * 3. Allows all inventory checks within transaction to see consistent state
+     *
+     * Note: SQLite uses table-level locks, not row-level like MySQL/PostgreSQL.
+     * This is sufficient for our use case since we validate all items before
+     * any updates occur (all-or-nothing semantics).
      */
     public static function createWithItems(string $customerName, array $items): array
     {
         $db = Database::connect();
 
         try {
-            // START IMMEDIATE: Acquire exclusive lock immediately.
-            // This prevents other transactions from reading/writing until this transaction completes.
+            // BEGIN IMMEDIATE: Acquire exclusive lock immediately.
+            // Prevents other transactions from modifying products table until we commit.
             $db->exec('BEGIN IMMEDIATE');
 
             $totalAmount = 0;
             $orderId = null;
-
-            // Validate and lock inventory for all products
             $productData = [];
+
+            // First pass: Validate all items have sufficient inventory
+            // Critical: We do ALL validation before ANY updates.
+            // This ensures if ANY item fails validation, entire order is rejected atomically.
+            // (If we updated inventory on-the-fly, partial updates could leak inventory)
             foreach ($items as $item) {
                 $productId = $item['product_id'];
                 $quantity = $item['quantity'];
 
-                // Check product existence and get current inventory
                 $stmt = $db->prepare('SELECT id, inventory, price, flash_sale_price FROM products WHERE id = ?');
                 $stmt->execute([$productId]);
                 $row = $stmt->fetch();
@@ -128,10 +141,13 @@ class Order
                 }
 
                 $currentInventory = (int)$row['inventory'];
+
+                // Inventory check: Fail fast if we can't fulfill entire order
                 if ($currentInventory < $quantity) {
                     throw new \Exception("Insufficient inventory for product {$productId}. Available: {$currentInventory}, Requested: {$quantity}", 409);
                 }
 
+                // Cache product data for second pass
                 $productData[$productId] = [
                     'inventory' => $currentInventory,
                     'price' => $row['price'],
@@ -139,12 +155,13 @@ class Order
                 ];
             }
 
-            // All inventory checks passed, create the order
+            // Second pass: All validations passed, now create the order and update inventory
+            // Still within transaction, so if anything fails here, entire operation rolls back
             $stmt = $db->prepare('INSERT INTO orders (customer_name, total_amount, status) VALUES (?, ?, ?)');
             $stmt->execute([$customerName, 0, 'pending']);
             $orderId = (int)$db->lastInsertId();
 
-            // Create order items and update inventory
+            // Create order items and decrement inventory
             foreach ($items as $item) {
                 $productId = $item['product_id'];
                 $quantity = $item['quantity'];

@@ -6,6 +6,11 @@ class Validator
 {
     private array $errors = [];
 
+    /**
+     * Validate data against a set of rules.
+     * Collects all errors before returning, so client gets complete picture
+     * instead of failing on first error.
+     */
     public function validate(array $data, array $rules): bool
     {
         $this->errors = [];
@@ -13,16 +18,25 @@ class Validator
         foreach ($rules as $field => $fieldRules) {
             $value = $data[$field] ?? null;
 
+            // Apply each rule to this field
+            // Rules are applied independently so a field can fail multiple rules
             foreach ($fieldRules as $rule) {
                 $this->applyRule($field, $value, $rule);
             }
         }
 
+        // Return true if no errors found
         return empty($this->errors);
     }
 
+    /**
+     * Apply a single validation rule to a field value.
+     * Each rule checks one aspect (required, numeric, min length, etc).
+     * If validation fails, error is added to $this->errors array.
+     */
     private function applyRule(string $field, mixed $value, string $rule): void
     {
+        // 'required' rule: field must be present and not empty
         if (str_starts_with($rule, 'required')) {
             if ($value === null || $value === '') {
                 $this->errors[$field] = "Field '{$field}' is required";
@@ -32,10 +46,13 @@ class Validator
                 $this->errors[$field] = "Field '{$field}' must be numeric";
             }
         } elseif (str_starts_with($rule, 'positive')) {
+            // 'positive' rule: strictly greater than 0 (used for prices, quantities)
             if ($value !== null && is_numeric($value) && $value <= 0) {
                 $this->errors[$field] = "Field '{$field}' must be greater than 0";
             }
         } elseif (str_starts_with($rule, 'non_negative')) {
+            // 'non_negative' rule: 0 or greater (used for inventory)
+            // Allows 0 inventory but not negative
             if ($value !== null && is_numeric($value) && $value < 0) {
                 $this->errors[$field] = "Field '{$field}' cannot be negative";
             }
